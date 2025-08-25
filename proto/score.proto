@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package score;
+
+service ScoreService {
+    rpc GetScore (JsonVector) returns (ScoreResponse);
+}
+
+message JsonVector {
+    string json = 1;  // random vector (JSON string)
+}
+
+message ScoreResponse {
+    double score = 1;  // random float reply
+}

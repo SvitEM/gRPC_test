@@ -1,0 +1,30 @@
+# gRPC Latency Tests - Optimized Dependencies (2024)
+# Use in clean virtual environment to avoid conflicts
+
+# === Runtime Dependencies ===
+# Core gRPC library - latest stable version (Dec 2024)
+grpcio>=1.75.0
+
+# Environment configuration support
+python-dotenv>=1.0.1
+
+# Protocol buffer runtime - latest 6.x version with C++/UPB support
+protobuf>=6.32.0
+
+# High-performance event loop for asyncio - latest version  
+uvloop>=0.21.0
+
+# === Build-time Dependencies ===
+# Protocol buffer compiler and gRPC tools - latest version
+grpcio-tools>=1.75.0
+
+# === Performance Benefits of protobuf 6.x ===
+# - Up to 10x faster serialization/deserialization
+# - Better memory efficiency
+# - Improved Python type hints support
+# - Latest security updates
+
+# === Notes ===
+# This configuration requires a clean virtual environment
+# to avoid conflicts with Google Cloud libraries that
+# require protobuf <5.0.0

@@ -1,0 +1,3 @@
+# Certificate directory for DF server
+# Contains: ca.crt, server.crt, server.key
+# These are LOCAL TEST CERTIFICATES only - DO NOT commit real secrets

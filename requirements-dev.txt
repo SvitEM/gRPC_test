@@ -1,0 +1,30 @@
+# gRPC Latency Tests - Development Dependencies
+# Includes both runtime and build-time dependencies
+
+# === Runtime Dependencies (Production) ===
+# Core gRPC library - required for both client and server  
+grpcio>=1.60.0
+
+# Environment configuration support (.env files)
+python-dotenv>=1.0.0
+
+# === Build-time Dependencies (Development) ===
+# Protocol buffer compiler and gRPC tools for stub generation
+grpcio-tools>=1.60.0
+
+# Protocol buffer runtime - compatible with Google libraries
+protobuf>=4.21.0,<5.0.0
+
+# === Optional Development Tools ===
+# Code formatting
+# black>=23.0.0
+
+# Linting
+# flake8>=6.0.0
+
+# Type checking
+# mypy>=1.0.0
+
+# Testing (if tests are added)
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0

@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(mkdir:*)",
+      "Bash(openssl x509:*)",
+      "Bash(openssl genrsa:*)",
+      "Bash(openssl req:*)",
+      "Bash(cp:*)",
+      "Bash(touch:*)",
+      "Bash(N_RPS=1 T_DURATION_SEC=5 T_WARMUP_SEC=1 python3.10 01_steady_client.py)",
+      "Bash(python3.10:*)",
+      "Bash(openssl verify:*)",
+      "Bash(openssl s_client:*)",
+      "Bash(N_RPS=10 T_DURATION_SEC=5 T_WARMUP_SEC=1 python3.10 test_insecure_steady.py)",
+      "Bash(T_DURATION_SEC=5 python3.10 test_insecure_coldconn.py)",
+      "Bash(chmod:*)",
+      "Bash(python3.11 -m pip show:*)",
+      "Bash(python3.11 -m grpc_tools.protoc:*)",
+      "Bash(/Users/svit/Documents/work/GPB/connction_tests/quick_protobuf6_test.sh)",
+      "Bash(./quick_protobuf6_test.sh:*)",
+      "Bash(source:*)",
+      "Bash(N_RPS=10 T_DURATION_SEC=3 T_WARMUP_SEC=1 python test_insecure_steady.py)",
+      "Bash(python:*)",
+      "WebFetch(domain:stackoverflow.com)",
+      "WebSearch",
+      "Bash(git remote add:*)",
+      "Bash(git add:*)",
+      "Bash(git reset:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
