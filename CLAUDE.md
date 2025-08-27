@@ -142,3 +142,5 @@ message ScoreResponse { double score = 1; }  // random float reply
 - Keep `CLAUDE.md` concise and evolve it as friction appears.
 - Reuse a single channel for steady‑state to avoid handshake overhead; measure handshake cost separately in cold‑connection test.
 - Prefer app‑level delay injection for determinism; document any optional netem usage explicitly.
+
+- keep 50ms timeout

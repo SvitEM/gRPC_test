@@ -10,7 +10,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Dict
 
 # Optimize protobuf implementation for best performance
 import sys
@@ -54,47 +54,43 @@ class SteadyLoadGenerator:
         self.df_delay_ms = df_delay_ms
         self.target = f"{host}:{port}"
         
-        # Create SSL credentials (server-side TLS only for now)
+        # Create SSL credentials with mTLS (client certs)
         self.credentials = grpc.ssl_channel_credentials(
             root_certificates=ca_cert,
-            private_key=None,
-            certificate_chain=None
+            private_key=client_key,
+            certificate_chain=client_cert
         )
         
-        # gRPC channel options for performance
+        # Optimized gRPC channel options for stability and performance
         self.channel_options = [
-            ('grpc.so_reuseport', 1),              # Enable SO_REUSEPORT for client
-            ('grpc.keepalive_time_ms', 3600000),  # 1 hour keepalive
-            ('grpc.keepalive_timeout_ms', 5000),   # 5 second timeout
-            ('grpc.keepalive_permit_without_calls', True),  # Allow keepalive without calls
-            ('grpc.http2.max_pings_without_data', 0),  # No limit on pings
-            ('grpc.http2.min_ping_interval_without_data_ms', 60000),  # 1 minute between pings
-            ('grpc.http2.min_time_between_pings_ms', 60000),  # 1 minute between pings
-            ('grpc.max_send_message_length', 1024),    # Small message limit
-            ('grpc.max_receive_message_length', 1024), # Small response limit
-            ('grpc.max_concurrent_streams', 1024),
+            ('grpc.so_reuseport', 1),
+            ('grpc.keepalive_time_ms', 30000),     # 30 sec keepalive
+            ('grpc.keepalive_timeout_ms', 5000),   # 5 sec timeout
+            ('grpc.keepalive_permit_without_calls', True),
+            ('grpc.http2.max_pings_without_data', 0),
+            ('grpc.http2.min_ping_interval_without_data_ms', 10000),  # 10 sec
+            ('grpc.http2.min_time_between_pings_ms', 10000),          # 10 sec
+            ('grpc.max_send_message_length', 1024),
+            ('grpc.max_receive_message_length', 1024),
+            ('grpc.max_concurrent_streams', 512),   # Reduced for stability
+            # TCP buffer optimization
+            ('grpc.so_sndbuf', 1048576),           # 1MB send buffer
+            ('grpc.so_rcvbuf', 1048576),           # 1MB recv buffer
+            ('grpc.http2.bdp_probe', 1),           # Enable bandwidth detection
+            # Connection pool settings
+            ('grpc.http2.max_frame_size', 16777215), # Max frame size
+            ('grpc.http2.write_buffer_size', 65536), # 64KB write buffer
         ]
         
-        self.results: List[dict] = []
+        self.results: List[Dict] = []
         self.channel = None
         self.stub = None
         
         # Pre-allocate request object to avoid repeated allocation
         self.request = score_pb2.JsonVector(json="{}")
         
-        # Memory pre-allocation pool for result objects
-        self.result_pool = [
-            {"ok": True, "latency_ms": 0.0, "net_latency_ms": 0.0} 
-            for _ in range(1000)
-        ]
-        self.pool_index = 0
-        
         # High-resolution timer for reduced system call overhead
         self.timer = HighResTimer()
-        
-        # Batch results writing to reduce I/O overhead
-        self.result_buffer = []
-        self.batch_size = 1000
     
     async def setup_channel(self):
         """Create and configure the reused secure channel"""
@@ -116,14 +112,14 @@ class SteadyLoadGenerator:
             await self.channel.close()
             logging.info("Channel closed")
     
-    async def send_rpc(self) -> dict:
+    async def send_rpc(self) -> Dict:
         """Send single RPC and measure latency"""
         start_ns = self.timer.now_ns()
         
         try:
             _ = await self.stub.GetScore(
                 self.request, 
-                timeout=0.05,  # 50ms timeout
+                timeout=0.050,  # 50ms timeout
                 compression=grpc.Compression.NoCompression
             )
             end_ns = self.timer.now_ns()
@@ -132,39 +128,29 @@ class SteadyLoadGenerator:
             # Subtract DF server artificial delay to get network/processing overhead
             net_latency_ms = total_latency_ms - self.df_delay_ms
             
-            # Reuse pre-allocated result object to reduce GC pressure
-            result = self.result_pool[self.pool_index]
-            result["ok"] = True
-            result["latency_ms"] = round(total_latency_ms, 2)
-            result["net_latency_ms"] = round(net_latency_ms, 2)
-            self.pool_index = (self.pool_index + 1) % 1000
-            return result
+            return {
+                "ok": True,
+                "latency_ms": round(total_latency_ms, 2),
+                "net_latency_ms": round(net_latency_ms, 2)
+            }
         except grpc.RpcError as e:
             end_ns = self.timer.now_ns()
             latency_ms = (end_ns - start_ns) / 1_000_000.0
             
-            # Reuse pre-allocated result object for errors too
-            result = self.result_pool[self.pool_index]
-            result["ok"] = False
-            result["code"] = e.code().name
-            result["latency_ms"] = round(latency_ms, 2)
-            # Remove net_latency_ms for error cases
-            result.pop("net_latency_ms", None)
-            self.pool_index = (self.pool_index + 1) % 1000
-            return result
+            return {
+                "ok": False,
+                "code": e.code().name,
+                "latency_ms": round(latency_ms, 2)
+            }
         except Exception as e:
             end_ns = self.timer.now_ns()
             latency_ms = (end_ns - start_ns) / 1_000_000.0
             
-            # Reuse pre-allocated result object for general errors
-            result = self.result_pool[self.pool_index]
-            result["ok"] = False
-            result["error"] = str(e)
-            result["latency_ms"] = round(latency_ms, 2)
-            # Remove net_latency_ms for error cases
-            result.pop("net_latency_ms", None)
-            self.pool_index = (self.pool_index + 1) % 1000
-            return result
+            return {
+                "ok": False,
+                "error": str(e),
+                "latency_ms": round(latency_ms, 2)
+            }
     
     async def run_warmup(self):
         """Run warmup phase with concurrent execution"""
@@ -180,7 +166,7 @@ class SteadyLoadGenerator:
         
         warmup_results = []
         active_tasks = []
-        max_concurrent = min(self.n_rps * 2, 500)  # Lower limit for warmup
+        max_concurrent = min(self.n_rps // 2, 100)  # Very conservative for warmup
         
         while (time.perf_counter() - warmup_start) < self.warmup_sec:
             current_time = time.perf_counter()
@@ -203,7 +189,7 @@ class SteadyLoadGenerator:
                 active_tasks.append(task)
                 next_send_time += interval_sec
             else:
-                await asyncio.sleep(0.001)  # Small sleep to avoid busy waiting
+                await asyncio.sleep(0)  # Yield without delay
         
         # Wait for remaining warmup tasks
         if active_tasks:
@@ -224,9 +210,9 @@ class SteadyLoadGenerator:
         test_start = time.perf_counter()
         next_send_time = test_start
         
-        # Track active tasks to manage concurrency
+        # Track active tasks with conservative concurrency limits
         active_tasks = []
-        max_concurrent = min(self.n_rps * 2, 1000)  # Allow 2x RPS concurrent requests, max 1000
+        max_concurrent = min(self.n_rps // 2, 200)  # Conservative: 0.5x RPS, max 200
         
         while (time.perf_counter() - test_start) < self.duration_sec:
             current_time = time.perf_counter()
@@ -236,23 +222,18 @@ class SteadyLoadGenerator:
             for task in completed_tasks:
                 try:
                     result = await task
-                    self.result_buffer.append(result.copy())
+                    self.results.append(result)
                 except Exception as e:
                     logging.error(f"Task failed: {e}")
                     # Add error result
-                    error_result = self.result_pool[self.pool_index]
-                    error_result["ok"] = False
-                    error_result["code"] = "TASK_ERROR"
-                    self.result_buffer.append(error_result.copy())
-                    self.pool_index = (self.pool_index + 1) % 1000
+                    self.results.append({
+                        "ok": False,
+                        "code": "TASK_ERROR",
+                        "latency_ms": 0.0
+                    })
             
             # Remove completed tasks
             active_tasks = [task for task in active_tasks if not task.done()]
-            
-            # Flush buffer periodically
-            if len(self.result_buffer) >= self.batch_size:
-                self.results.extend(self.result_buffer)
-                self.result_buffer.clear()
             
             # Send new request if it's time and we're not at concurrency limit
             if current_time >= next_send_time and len(active_tasks) < max_concurrent:
@@ -263,8 +244,8 @@ class SteadyLoadGenerator:
                 # Schedule next request
                 next_send_time += interval_sec
             else:
-                # Small sleep to avoid busy waiting
-                await asyncio.sleep(0.001)  # 1ms
+                # Yield control to prevent event loop blocking
+                await asyncio.sleep(0)  # Yield without delay
         
         # Wait for all remaining tasks to complete
         if active_tasks:
@@ -274,18 +255,13 @@ class SteadyLoadGenerator:
             for result in remaining_results:
                 if isinstance(result, Exception):
                     logging.error(f"Final task failed: {result}")
-                    error_result = self.result_pool[self.pool_index]
-                    error_result["ok"] = False
-                    error_result["code"] = "TASK_ERROR"
-                    self.result_buffer.append(error_result.copy())
-                    self.pool_index = (self.pool_index + 1) % 1000
+                    self.results.append({
+                        "ok": False,
+                        "code": "TASK_ERROR",
+                        "latency_ms": 0.0
+                    })
                 else:
-                    self.result_buffer.append(result.copy())
-        
-        # Flush remaining results
-        if self.result_buffer:
-            self.results.extend(self.result_buffer)
-            self.result_buffer.clear()
+                    self.results.append(result)
         
         successful = sum(1 for r in self.results if r["ok"])
         total = len(self.results)
@@ -383,8 +359,9 @@ if __name__ == '__main__':
         uvloop.install()
         logging.info("Using uvloop for high-performance event loop")
     
-    # Optimize garbage collection for stability
-    gc.set_threshold(700, 10, 10)  # More aggressive GC to reduce pauses
+    # Optimize garbage collection for low latency
+    gc.disable()  # Disable automatic GC
+    gc.set_threshold(0)  # Disable generational GC
     
     # CPU affinity for reduced context switching (Linux only)
     try:
@@ -393,4 +370,8 @@ if __name__ == '__main__':
     except (AttributeError, OSError):
         pass  # Not available on macOS or permission denied
     
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        # Manual GC cleanup at end
+        gc.collect()
