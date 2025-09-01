@@ -3,21 +3,23 @@
 DF Steady Server - gRPC server with mTLS and artificial delay
 """
 import asyncio
-from concurrent import futures
 import logging
+import time
+from concurrent import futures
 import os
 import random
 import sys
 from pathlib import Path
 
-# Optimize protobuf implementation for best performance
+# Ensure high-performance protobuf implementation is selected early
+os.environ.setdefault('PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION', 'upb')
+
+# Optimize protobuf implementation for best performance (optional)
 try:
     from protobuf_optimizer import optimize_protobuf
     optimize_protobuf()
 except ImportError:
-    # Fallback: try to set a reasonable default
-    import os
-    os.environ.setdefault('PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION', 'upb')
+    pass
 
 import grpc
 from dotenv import load_dotenv
@@ -39,27 +41,50 @@ class ScoreServicer(score_pb2_grpc.ScoreServiceServicer):
     def __init__(self, delay_ms: float):
         self.delay_seconds = delay_ms / 1000.0
         logging.info(f"ScoreServicer initialized with {delay_ms}ms delay")
+        # Prebind hot-path callables to reduce lookups/allocs per request
+        self._sleep = asyncio.sleep
+        self._rand = random.random
+        self._mk_resp = score_pb2.ScoreResponse
         
     async def GetScore(self, request: score_pb2.JsonVector, context: grpc.ServicerContext) -> score_pb2.ScoreResponse:
         """Handle GetScore RPC with artificial delay"""
         try:
             # Add artificial delay
             if self.delay_seconds > 0:
-                await asyncio.sleep(self.delay_seconds)
-            
+                start_ns = time.perf_counter_ns()
+                await self._sleep(self.delay_seconds)
+                actual_delay_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+            else:
+                actual_delay_ms = 0.0
+
+            # If the client cancelled or deadline exceeded, stop cleanly
+            if hasattr(context, "is_active") and not context.is_active():
+                await context.abort(grpc.StatusCode.CANCELLED, "Request cancelled or deadline exceeded")
+
+            # Send initial metadata with configured and actual delay for precise client-side accounting
+            try:
+                await context.send_initial_metadata((
+                    ("df-config-delay-ms", f"{self.delay_seconds * 1000.0:.3f}"),
+                    ("df-actual-delay-ms", f"{actual_delay_ms:.3f}"),
+                ))
+            except Exception:
+                # Ignore metadata send issues; proceed with response
+                pass
+
             # Create fresh response instead of reusing (fixes ExecuteBatchError)
-            response = score_pb2.ScoreResponse(score=random.uniform(0.0, 1.0))
-            return response
+            return self._mk_resp(score=self._rand())
             
         except asyncio.CancelledError:
             # Handle client disconnection gracefully
             logging.debug("Request cancelled by client")
             raise
+        except grpc.RpcError:
+            # Propagate aborts/cancellations without converting to INTERNAL
+            raise
         except Exception as e:
-            logging.error(f"Error processing GetScore request: {e}")
-            context.set_code(grpc.StatusCode.INTERNAL)
-            context.set_details(f"Internal server error")
-            return score_pb2.ScoreResponse(score=0.0)
+            logging.exception(f"Error processing GetScore request: {e}")
+            # Abort the RPC with INTERNAL to avoid partial writes on closed streams
+            await context.abort(grpc.StatusCode.INTERNAL, "Internal server error")
 
 
 async def serve():
@@ -69,7 +94,8 @@ async def serve():
     
     host = os.getenv('DF_HOST', '0.0.0.0')
     port = int(os.getenv('DF_PORT', '50051'))
-    delay_ms = float(os.getenv('DELAY_MS', '5'))
+    # Default to no artificial delay; set DELAY_MS if needed explicitly
+    delay_ms = float(os.getenv('DELAY_MS', '0'))
     tls_ca = os.getenv('TLS_CA', 'certs/ca.crt')
     tls_cert = os.getenv('TLS_CERT', 'certs/server.crt')
     tls_key = os.getenv('TLS_KEY', 'certs/server.key')
@@ -102,9 +128,8 @@ async def serve():
         require_client_auth=True
     )
     
-    # Create and configure server with optimized settings
+    # Create and configure server with optimized settings (pure-async handlers)
     server = grpc.aio.server(
-        futures.ThreadPoolExecutor(max_workers=8),  # Moderate thread pool
         options=(
             ('grpc.so_reuseport', 1),
             ('grpc.max_concurrent_streams', 512),    # Match client limit
@@ -119,8 +144,11 @@ async def serve():
             # TCP buffer optimization
             ('grpc.so_sndbuf', 1048576),          # 1MB send buffer
             ('grpc.so_rcvbuf', 1048576),          # 1MB recv buffer
-            ('grpc.http2.bdp_probe', 1),          # Bandwidth detection
+            ('grpc.http2.bdp_probe', 0),          # Disable BDP probe on loopback
             ('grpc.http2.max_frame_size', 16777215), # Max frame size
+            # Increase HTTP/2 flow-control windows
+            ('grpc.http2.initial_connection_window_size', 8388608),
+            ('grpc.http2.initial_stream_window_size', 8388608),
         ),
     )
     score_pb2_grpc.add_ScoreServiceServicer_to_server(
@@ -135,6 +163,10 @@ async def serve():
     await server.start()
     logging.info(f"DF Steady Server listening on {listen_addr} (mTLS enabled)")
     
+    # Background GC maintainer removed to avoid any periodic pauses
+    from contextlib import suppress
+    gc_task = None
+    
     # Wait for termination
     try:
         await server.wait_for_termination()
@@ -142,6 +174,10 @@ async def serve():
         logging.info("Received interrupt signal, shutting down...")
     finally:
         logging.info("Stopping server...")
+        if gc_task is not None:
+            gc_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await gc_task
         await server.stop(grace=2)
         logging.info("Server shutdown complete")
 
@@ -166,10 +202,10 @@ def main():
         uvloop.install()
         logging.info("Using uvloop for high-performance event loop")
     
-    # Optimize garbage collection for low latency
+    # Optimize garbage collection for ultra-low latency: disable completely
     import gc
-    gc.disable()  # Disable automatic GC
-    gc.set_threshold(0)  # Disable generational GC
+    gc.disable()
+    gc.set_threshold(0)
     
     # Log detailed protobuf status
     try:

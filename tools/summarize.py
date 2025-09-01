@@ -49,30 +49,48 @@ def load_results(file_path: Path) -> tuple[str, List[Dict[str, Any]]]:
 def compute_percentiles(values: List[float], percentiles: List[float]) -> Dict[str, float]:
     """Compute specified percentiles from a list of values"""
     if not values:
-        return {f"p{int(p*100)}": 0.0 for p in percentiles}
+        result: Dict[str, float] = {}
+        for p in percentiles:
+            key = _percentile_key(p)
+            result[key] = 0.0
+        return result
     
     sorted_values = sorted(values)
     result = {}
     
     for p in percentiles:
+        key = _percentile_key(p)
         if p == 1.0:
-            result[f"p{int(p*100)}"] = sorted_values[-1]  # max
+            result[key] = sorted_values[-1]  # max
         else:
             idx = p * (len(sorted_values) - 1)
             lower_idx = int(idx)
             upper_idx = min(lower_idx + 1, len(sorted_values) - 1)
             
             if lower_idx == upper_idx:
-                result[f"p{int(p*100)}"] = sorted_values[lower_idx]
+                result[key] = sorted_values[lower_idx]
             else:
                 # Linear interpolation
                 weight = idx - lower_idx
-                result[f"p{int(p*100)}"] = (
+                result[key] = (
                     sorted_values[lower_idx] * (1 - weight) +
                     sorted_values[upper_idx] * weight
                 )
     
     return result
+
+
+def _percentile_key(p: float) -> str:
+    """Return a stable key name for a percentile value.
+    - 1.0 -> 'p100'
+    - 0.999 -> 'p999' (P99.9)
+    - Others use two-digit percent: e.g., 0.95 -> 'p95'
+    """
+    if p >= 1.0:
+        return "p100"
+    if abs(p - 0.999) < 1e-9:
+        return "p999"
+    return f"p{int(round(p * 100))}"
 
 
 def analyze_steady_results(test_name: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -161,7 +179,7 @@ def format_steady_report(analysis: Dict[str, Any]) -> str:
 - **P90**: {analysis['latency_stats']['p90']:.2f}
 - **P95**: {analysis['latency_stats']['p95']:.2f}
 - **P99**: {analysis['latency_stats']['p99']:.2f}
-- **P99.9**: {analysis['latency_stats']['p99']:.2f}
+- **P99.9**: {analysis['latency_stats']['p999']:.2f}
 - **Max**: {analysis['latency_stats']['p100']:.2f}
 
 """
@@ -191,7 +209,7 @@ def format_coldconn_report(analysis: Dict[str, Any]) -> str:
 - **P90**: {analysis['connect_time_stats']['p90']:.2f}
 - **P95**: {analysis['connect_time_stats']['p95']:.2f}
 - **P99**: {analysis['connect_time_stats']['p99']:.2f}
-- **P99.9**: {analysis['connect_time_stats']['p99']:.2f}
+- **P99.9**: {analysis['connect_time_stats']['p999']:.2f}
 - **Max**: {analysis['connect_time_stats']['p100']:.2f}
 
 ## First RPC Time Statistics (ms)
@@ -200,7 +218,7 @@ def format_coldconn_report(analysis: Dict[str, Any]) -> str:
 - **P90**: {analysis['first_rpc_time_stats']['p90']:.2f}
 - **P95**: {analysis['first_rpc_time_stats']['p95']:.2f}
 - **P99**: {analysis['first_rpc_time_stats']['p99']:.2f}
-- **P99.9**: {analysis['first_rpc_time_stats']['p99']:.2f}
+- **P99.9**: {analysis['first_rpc_time_stats']['p999']:.2f}
 - **Max**: {analysis['first_rpc_time_stats']['p100']:.2f}
 
 ## Total Time Statistics (ms)
@@ -209,7 +227,7 @@ def format_coldconn_report(analysis: Dict[str, Any]) -> str:
 - **P90**: {analysis['total_time_stats']['p90']:.2f}
 - **P95**: {analysis['total_time_stats']['p95']:.2f}
 - **P99**: {analysis['total_time_stats']['p99']:.2f}
-- **P99.9**: {analysis['total_time_stats']['p99']:.2f}
+- **P99.9**: {analysis['total_time_stats']['p999']:.2f}
 - **Max**: {analysis['total_time_stats']['p100']:.2f}
 
 """
