@@ -28,7 +28,13 @@
       "Bash(git add:*)",
       "Bash(git reset:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(N_RPS=10 T_DURATION_SEC=5 T_WARMUP_SEC=1 python 01_steady_client.py)",
+      "Bash(./generate_certs.sh:*)",
+      "Bash(N_RPS=10 T_DURATION_SEC=3 T_WARMUP_SEC=1 python 01_steady_client.py)",
+      "Bash(N_RPS=2000 T_DURATION_SEC=60 T_WARMUP_SEC=10 python 01_steady_client.py)",
+      "Bash(N_RPS=2000 T_DURATION_SEC=30 T_WARMUP_SEC=5 python 01_steady_client.py)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []
