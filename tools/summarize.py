@@ -100,7 +100,12 @@ def analyze_steady_results(test_name: str, results: List[Dict[str, Any]]) -> Dic
     failed_requests = [r for r in results if not r.get("ok", False)]
     
     # Extract latencies from successful requests
-    latencies = [r["net_latency_ms"] for r in successful_requests if "net_latency_ms" in r]
+    latencies = []
+    for r in successful_requests:
+        if "net_latency_ms" in r:
+            latencies.append(r["net_latency_ms"])
+        elif "latency_ms" in r:
+            latencies.append(r["latency_ms"])
     
     # Compute percentiles
     percentiles = [0.5, 0.9, 0.95, 0.99, 0.999, 1.0]
