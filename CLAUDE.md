@@ -144,3 +144,8 @@ message ScoreResponse { double score = 1; }  // random float reply
 - Prefer app‑level delay injection for determinism; document any optional netem usage explicitly.
 
 - keep 50ms timeout
+- Configuration:
+
+  - 40ms: Server processing delay (as required)
+  - 10ms: gRPC overhead budget (target)
+  - 50ms: Total timeout (strict requirement)

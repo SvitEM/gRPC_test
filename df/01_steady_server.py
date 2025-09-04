@@ -128,27 +128,32 @@ async def serve():
         require_client_auth=True
     )
     
-    # Create and configure server with optimized settings (pure-async handlers)
+    # Ultra-optimized server settings for <10ms gRPC overhead
     server = grpc.aio.server(
         options=(
             ('grpc.so_reuseport', 1),
-            ('grpc.max_concurrent_streams', 512),    # Match client limit
-            ('grpc.keepalive_time_ms', 30000),       # 30 sec keepalive
-            ('grpc.keepalive_timeout_ms', 5000),     # 5 sec timeout
-            ('grpc.keepalive_permit_without_calls', True),
+            ('grpc.max_concurrent_streams', 1000),        # Adequate concurrency
+            ('grpc.keepalive_time_ms', 300000),          # 5min - minimal overhead
+            ('grpc.keepalive_timeout_ms', 30000),        # 30s timeout
+            ('grpc.keepalive_permit_without_calls', False), # No unnecessary keepalives
             ('grpc.http2.max_pings_without_data', 0),
-            ('grpc.http2.min_time_between_pings_ms', 10000),  # 10 sec
-            ('grpc.http2.min_ping_interval_without_data_ms', 10000), # 10 sec
-            ('grpc.max_receive_message_length', 1048576),  # 1MB limit
-            ('grpc.max_send_message_length', 1048576),     # 1MB limit
-            # TCP buffer optimization
-            ('grpc.so_sndbuf', 1048576),          # 1MB send buffer
-            ('grpc.so_rcvbuf', 1048576),          # 1MB recv buffer
-            ('grpc.http2.bdp_probe', 0),          # Disable BDP probe on loopback
-            ('grpc.http2.max_frame_size', 16777215), # Max frame size
-            # Increase HTTP/2 flow-control windows
-            ('grpc.http2.initial_connection_window_size', 8388608),
-            ('grpc.http2.initial_stream_window_size', 8388608),
+            ('grpc.http2.min_time_between_pings_ms', 30000),
+            ('grpc.http2.min_ping_interval_without_data_ms', 30000),
+            ('grpc.max_receive_message_length', 65536),   # 64KB - match client
+            ('grpc.max_send_message_length', 4096),       # 4KB responses
+            # Smaller buffers for faster processing
+            ('grpc.so_sndbuf', 65536),                    # 64KB buffers
+            ('grpc.so_rcvbuf', 65536),
+            ('grpc.http2.bdp_probe', 0),                  # Disable BDP probe - overhead
+            ('grpc.http2.max_frame_size', 16384),         # 16KB frames
+            ('grpc.http2.write_buffer_size', 8192),       # 8KB write buffer
+            # Smaller windows for lower latency
+            ('grpc.http2.initial_connection_window_size', 65536),   # 64KB
+            ('grpc.http2.initial_stream_window_size', 65536),
+            ('grpc.http2.lookahead_bytes', 0),            # Disable lookahead
+            ('grpc.http2.hpack_table_size.decoder', 4096), # Smaller HPACK
+            ('grpc.http2.hpack_table_size.encoder', 4096),
+            ('grpc.optimization.disable_call_batching', 1),  # Disable batching for low latency
         ),
     )
     score_pb2_grpc.add_ScoreServiceServicer_to_server(
