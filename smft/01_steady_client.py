@@ -9,8 +9,9 @@ import logging
 import os
 import sys
 import time
+import statistics
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Any
 from collections import deque
 
 # Optimize protobuf implementation for best performance
@@ -561,6 +562,134 @@ class SteadyLoadGenerator:
         except Exception as e:
             logging.error(f"Error writing results: {e}")
             raise
+    
+    def compute_percentiles(self, values: List[float], percentiles: List[float]) -> Dict[str, float]:
+        """Compute specified percentiles from a list of values"""
+        if not values:
+            result: Dict[str, float] = {}
+            for p in percentiles:
+                key = self._percentile_key(p)
+                result[key] = 0.0
+            return result
+        
+        sorted_values = sorted(values)
+        result = {}
+        
+        for p in percentiles:
+            key = self._percentile_key(p)
+            if p == 1.0:
+                result[key] = sorted_values[-1]  # max
+            else:
+                idx = p * (len(sorted_values) - 1)
+                lower_idx = int(idx)
+                upper_idx = min(lower_idx + 1, len(sorted_values) - 1)
+                
+                if lower_idx == upper_idx:
+                    result[key] = sorted_values[lower_idx]
+                else:
+                    # Linear interpolation
+                    weight = idx - lower_idx
+                    result[key] = (
+                        sorted_values[lower_idx] * (1 - weight) +
+                        sorted_values[upper_idx] * weight
+                    )
+        
+        return result
+    
+    def _percentile_key(self, p: float) -> str:
+        """Return a stable key name for a percentile value"""
+        if p >= 1.0:
+            return "p100"
+        if abs(p - 0.999) < 1e-9:
+            return "p999"
+        return f"p{int(round(p * 100))}"
+    
+    def analyze_results(self) -> Dict[str, Any]:
+        """Analyze test results and return summary statistics"""
+        test_name = "01_steady"
+        total_requests = len(self.results)
+        successful_requests = [r for r in self.results if r.get("ok", False)]
+        failed_requests = [r for r in self.results if not r.get("ok", False)]
+        
+        # Extract latencies from successful requests
+        latencies = []
+        for r in successful_requests:
+            if "net_latency_ms" in r:
+                latencies.append(r["net_latency_ms"])
+            elif "latency_ms" in r:
+                latencies.append(r["latency_ms"])
+        
+        # Compute percentiles
+        percentiles = [0.5, 0.9, 0.95, 0.99, 0.999, 1.0]
+        latency_stats = self.compute_percentiles(latencies, percentiles)
+        
+        # Error breakdown
+        error_codes = {}
+        for r in failed_requests:
+            code = r.get("code", r.get("error", "unknown"))
+            error_codes[code] = error_codes.get(code, 0) + 1
+        
+        return {
+            "test_name": test_name,
+            "total_requests": total_requests,
+            "successful_requests": len(successful_requests),
+            "failed_requests": len(failed_requests),
+            "success_rate": len(successful_requests) / total_requests if total_requests > 0 else 0.0,
+            "latency_stats": latency_stats,
+            "mean_latency_ms": statistics.mean(latencies) if latencies else 0.0,
+            "error_breakdown": error_codes
+        }
+    
+    def format_report(self, analysis: Dict[str, Any]) -> str:
+        """Format test results as markdown report"""
+        report = f"""# {analysis['test_name']} Results
+
+## Summary
+- **Total Requests**: {analysis['total_requests']:,}
+- **Successful**: {analysis['successful_requests']:,} ({analysis['success_rate']:.1%})
+- **Failed**: {analysis['failed_requests']:,}
+
+## Latency Statistics (ms)
+- **Mean**: {analysis['mean_latency_ms']:.2f}
+- **P50**: {analysis['latency_stats']['p50']:.2f}
+- **P90**: {analysis['latency_stats']['p90']:.2f}
+- **P95**: {analysis['latency_stats']['p95']:.2f}
+- **P99**: {analysis['latency_stats']['p99']:.2f}
+- **P99.9**: {analysis['latency_stats']['p999']:.2f}
+- **Max**: {analysis['latency_stats']['p100']:.2f}
+
+"""
+        
+        if analysis['error_breakdown']:
+            report += "## Error Breakdown\n"
+            for code, count in analysis['error_breakdown'].items():
+                rate = count / analysis['total_requests']
+                report += f"- **{code}**: {count:,} ({rate:.1%})\n"
+            report += "\n"
+        
+        return report
+    
+    def generate_summary_report(self, output_file: str):
+        """Generate and save analysis report"""
+        try:
+            analysis = self.analyze_results()
+            report = self.format_report(analysis)
+            
+            # Write markdown report
+            report_file = Path(output_file).with_suffix('.md')
+            with open(report_file, 'w') as f:
+                f.write(report)
+            
+            logging.info(f"Analysis report written to: {report_file}")
+            
+            # Print summary to console
+            print("\n" + "=" * 60)
+            print("LOAD TEST RESULTS SUMMARY")
+            print("=" * 60)
+            print(report)
+            
+        except Exception as e:
+            logging.error(f"Error generating summary report: {e}")
 
 
 async def main():
@@ -640,7 +769,10 @@ async def main():
     finally:
         # Always persist any collected results, even on failure
         try:
-            generator.write_results("01_steady_results.txt")
+            results_file = "01_steady_results.txt"
+            generator.write_results(results_file)
+            # Generate analysis report automatically
+            generator.generate_summary_report(results_file)
         except Exception as e:
             logging.error(f"Failed to write results: {e}")
         await generator.close_channel()
